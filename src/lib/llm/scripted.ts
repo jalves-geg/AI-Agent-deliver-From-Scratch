@@ -53,6 +53,13 @@ export function wantsAnyway(text: string): boolean {
   return /\b(anyway|even so|check anyway|compare anyway|proceed anyway|mesmo assim)\b/i.test(text);
 }
 
+/** The user asked for the check itself, not only for a reading of the register. */
+export function wantsCheck(text: string): boolean {
+  return /\b(check|compare|verify|verification|missing|verificar|verifica|conferir|confere|falta|desenhos|direitos)\b/i.test(
+    text,
+  );
+}
+
 export function extractOverrides(text: string): ParseOverrides {
   const overrides: ParseOverrides = {};
   const row = text.match(/(?:header(?:\s+row)?|cabe[cç]alho|linha|row)\D{0,24}(\d{1,3})/i);
@@ -114,6 +121,10 @@ export function createScriptedProvider(session: Session): LLMProvider {
         }
         if (last.name === "parse_deliverables") {
           if (!session.register) return reply(body.summary || explainHelp(lang));
+          const raw = latestUser(messages);
+          if (/\[folder\]/.test(raw) && session.pendingFolderNames?.length) {
+            return { content: "", toolCalls: [toolCall("list_folder", { usePending: true })] };
+          }
           return reply(explainUnderstanding(session.register, lang));
         }
         if (last.name === "confirm_register") {
@@ -134,14 +145,21 @@ export function createScriptedProvider(session: Session): LLMProvider {
                 : "I stored the names. Send the deliverables register first so I can check them.",
             );
           }
-          const user = visibleText(latestUser(messages));
-          if (session.confirmed || wantsAnyway(user)) {
+          const raw = latestUser(messages);
+          const user = visibleText(raw);
+          const sameMessage = /\[folder\]/.test(raw) && /\[attached-files\]/.test(raw);
+          if (session.confirmed || wantsAnyway(user) || wantsCheck(user) || sameMessage) {
             return { content: "", toolCalls: [toolCall("compare", {})] };
           }
           return reply(explainNeedConfirm(lang));
         }
         if (last.name === "compare" && session.comparison) {
-          return reply(explainComparison(session.comparison, lang));
+          const raw = latestUser(messages);
+          const comparisonText = explainComparison(session.comparison, lang);
+          if (/\[attached-files\]/.test(raw) && session.register) {
+            return reply(`${explainUnderstanding(session.register, lang)}\n\n${comparisonText}`);
+          }
+          return reply(comparisonText);
         }
         return reply(body.summary || explainHelp(lang));
       }

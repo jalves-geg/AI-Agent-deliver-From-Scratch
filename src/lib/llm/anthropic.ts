@@ -45,12 +45,16 @@ export function toAnthropicRequest(messages: ModelMessage[], tools: ProviderTool
     max_tokens: 4096,
     temperature: 0.2,
     system,
-    tools: tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.parameters,
-    })),
     messages: converted,
+    ...(tools.length > 0
+      ? {
+          tools: tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.parameters,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -59,16 +63,26 @@ export function createAnthropicProvider(config: AppConfig): LLMProvider {
     id: "anthropic",
     async complete(messages, tools) {
       if (!config.apiKey) throw new Error("No API key is configured.");
-      const response = await fetch(anthropicMessagesUrl(config.baseUrl), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": config.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify(toAnthropicRequest(messages, tools, config.model)),
-        signal: AbortSignal.timeout(120_000),
-      });
+      let response: Response;
+      try {
+        response = await fetch(anthropicMessagesUrl(config.baseUrl), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": config.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify(toAnthropicRequest(messages, tools, config.model)),
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
+      } catch (error) {
+        const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+        if (timedOut) {
+          throw new Error(`Model timed out after ${Math.round(config.timeoutMs / 1000)}s (${config.provider} / ${config.model}).`);
+        }
+        const detail = error instanceof Error ? error.message : "network error";
+        throw new Error(`Model request failed (${config.provider} / ${config.model}): ${detail}`);
+      }
       const payload = (await response.json().catch(() => ({}))) as {
         error?: { message?: string };
         content?: { type?: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }[];

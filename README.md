@@ -51,6 +51,8 @@ LLM_API_KEY=your-key
 
 `XAI_API_KEY` is also read when `LLM_API_KEY` is empty. The model needs tool calling. Restart `npm.cmd run dev` after changing the file.
 
+`LLM_TIMEOUT_MS` is how long one model call may take before the chat shows the error (default 35 seconds). A slow or failed model does not leave the screen on "Checking…". The register is parsed first, and the context panel updates as soon as that read finishes.
+
 | Provider | `LLM_PROVIDER` | Endpoint |
 | --- | --- | --- |
 | xAI (default) | `xai` | `https://api.x.ai/v1` |
@@ -75,7 +77,7 @@ Anthropic uses the Messages API. Every other provider uses chat completions.
    - the naming pattern `Region-Asset-Contract-Org-Discipline-DocType-{SheetType}{Chapter}{Serial}_{Rev}`
    - how many deliverables it found, skipping section rows such as `FOLDER 01 - BOOK 01`
    It then asks you to confirm or correct it. That understanding stays on the session and in the context panel. A correction such as "the column is Drawing Numbering and the header is row 11" parses the file again. "Yes, that's correct" / "Sim, está correto" confirms it.
-3. Share a folder with the browser's folder picker, or paste filenames. Only filenames leave the browser for a folder share; the register file itself is uploaded so it can be read. `list_folder` stores the names and `compare` checks them:
+3. Share a folder with the browser's folder picker, or paste filenames. A register and a folder in the same message are parsed and then compared, without waiting for a second turn. Only filenames leave the browser for a folder share; the register file itself is uploaded so it can be read. `list_folder` stores the names and `compare` checks them:
    - extensions ignored (`.pdf`, `.PDF`, `.dwg`, …)
    - same identity, different `_Rev` → wrong revision, expected versus found
    - no file for that identity → missing
@@ -113,7 +115,7 @@ flowchart LR
 ```
 
 - `src/lib/llm/` is the provider adapter. It speaks one internal shape: messages plus tool calls. `openaiCompatible.ts` covers xAI, OpenAI, Azure OpenAI, and any other chat-completions server. `anthropic.ts` translates the same shape to the Messages API. `scripted.ts` is the demo brain: it chooses tools from the conversation and writes the reply from the tool result, in Portuguese or English.
-- `src/lib/agent/loop.ts` calls the provider, runs tools, and feeds the results back. The system prompt in `src/lib/agent/prompt.ts` carries the session snapshot.
+- `src/lib/agent/loop.ts` calls the provider, runs tools, and feeds the results back. In live mode a register or folder is read before the model is called, and the model receives a short summary (counts, pattern, a few samples, a few issues), not the sheet. The system prompt in `src/lib/agent/prompt.ts` carries the session snapshot. `/api/chat` streams progress, each tool result, and the context panel as newline-delimited JSON, then the finished transcript.
 - `src/lib/tools/` is the registry. Tools do the work. The model does not invent counts.
 - `src/lib/parse/` and `src/lib/match/compare.ts` are pure functions with tests. The tools are thin wrappers that store the result on the session.
 - `src/lib/session/store.ts` keeps the register understanding, the folder names, the comparison, and the transcript in memory.
@@ -159,4 +161,4 @@ import "./echoNote";
 npm.cmd test
 ```
 
-Covers header-row and column detection, code lists, the naming pattern, a 1,700-row register, PDF text, revision mismatches (expected versus found), missing and extra files, the scripted PT/EN demo through the API, and a live tool-calling round trip against an OpenAI-compatible server with an API key.
+Covers header-row and column detection, code lists, the naming pattern, a 1,700-row register, PDF text, revision mismatches (expected versus found), missing and extra files, the scripted PT/EN demo through the API, and a live OpenAI-compatible round trip: a 1,700-row register plus a folder in one Portuguese message, a compact model payload, and a model call that never answers.

@@ -34,27 +34,40 @@ export function createOpenAICompatibleProvider(config: AppConfig): LLMProvider {
       const url = chatCompletionsUrl(config);
       const body: Record<string, unknown> = {
         messages: messages.map(toOpenAIMessage),
-        tools: tools.map((tool: ProviderTool) => ({
+        temperature: 0.2,
+        max_tokens: 800,
+      };
+      if (tools.length > 0) {
+        body.tools = tools.map((tool: ProviderTool) => ({
           type: "function",
           function: {
             name: tool.name,
             description: tool.description,
             parameters: tool.parameters,
           },
-        })),
-        temperature: 0.2,
-      };
+        }));
+      }
       if (config.provider !== "azure") body.model = config.model;
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (config.provider === "azure") headers["api-key"] = config.apiKey;
       else headers.Authorization = `Bearer ${config.apiKey}`;
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(120_000),
-      });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
+      } catch (error) {
+        const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+        if (timedOut) {
+          throw new Error(`Model timed out after ${Math.round(config.timeoutMs / 1000)}s (${config.provider} / ${config.model}).`);
+        }
+        const detail = error instanceof Error ? error.message : "network error";
+        throw new Error(`Model request failed (${config.provider} / ${config.model}): ${detail}`);
+      }
       const payload = (await response.json().catch(() => ({}))) as {
         error?: { message?: string };
         choices?: { message?: { content?: unknown; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] } }[];

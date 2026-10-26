@@ -3,6 +3,7 @@ import { POST as chat } from "@/app/api/chat/route";
 import { POST as seed } from "@/app/api/demo/seed/route";
 import { GET as exportCheck } from "@/app/api/export/route";
 import { runAgent } from "@/lib/agent/loop";
+import { readChatEvents, type SessionSnapshot } from "@/lib/chatEvents";
 import { composeUserContent } from "@/lib/chatTurn";
 import { buildSyntheticBundle } from "@/lib/demo/synthetic";
 import { extractOverrides } from "@/lib/llm/scripted";
@@ -28,7 +29,11 @@ function sessionWithRegister() {
   return session;
 }
 
-async function say(sessionId: string, text: string, extra: { fileIds?: string[]; folderNames?: string[]; lang?: "pt" | "en"; demo?: boolean } = {}) {
+async function say(
+  sessionId: string,
+  text: string,
+  extra: { fileIds?: string[]; folderNames?: string[]; lang?: "pt" | "en"; demo?: boolean } = {},
+): Promise<SessionSnapshot> {
   const response = await chat(
     new Request("http://local/api/chat", {
       method: "POST",
@@ -36,12 +41,10 @@ async function say(sessionId: string, text: string, extra: { fileIds?: string[];
     }),
   );
   expect(response.status).toBe(200);
-  return response.json() as Promise<{
-    messages: { role: string; text: string; tools?: { name: string }[]; showComparison?: boolean }[];
-    understanding: { headerRow: number; numberColumn: string; deliverableCount: number; pattern: { expression: string } };
-    confirmed: boolean;
-    comparison: { ok: number; wrongRevision: number; missing: number; extra: number } | null;
-  }>;
+  const events = await readChatEvents(response);
+  const done = events.find((event) => event.type === "done");
+  if (!done || done.type !== "done") throw new Error(`Chat stream had no done event (${events.map((event) => event.type).join(", ")}).`);
+  return done.session;
 }
 
 describe("scripted agent", () => {
@@ -60,10 +63,10 @@ describe("scripted agent", () => {
     const first = await say("demo-en-session", "Here is the deliverables register. Please read it and tell me what you understood.", {
       fileIds: [seedBody.fileId],
     });
-    expect(first.understanding.headerRow).toBe(11);
-    expect(first.understanding.numberColumn).toBe("Drawing Numbering");
-    expect(first.understanding.deliverableCount).toBe(36);
-    expect(first.understanding.pattern.expression).toContain("{SheetType}{Chapter}{Serial}_{Rev}");
+    expect(first.understanding?.headerRow).toBe(11);
+    expect(first.understanding?.numberColumn).toBe("Drawing Numbering");
+    expect(first.understanding?.deliverableCount).toBe(36);
+    expect(first.understanding?.pattern?.expression).toContain("{SheetType}{Chapter}{Serial}_{Rev}");
     expect(first.confirmed).toBe(false);
     expect(first.messages.at(-1)?.text).toMatch(/Header row: 11/);
     expect(first.messages.at(-1)?.text).toMatch(/Is that right/);

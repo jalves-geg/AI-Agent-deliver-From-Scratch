@@ -8,6 +8,7 @@ export type AppConfig = {
   azureApiVersion: string;
   azureDeployment: string;
   demoMode: boolean;
+  timeoutMs: number;
 };
 
 const PROVIDERS: Record<string, ProviderId> = {
@@ -55,6 +56,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     env.LLM_BASE_URL || (provider === "azure" ? env.AZURE_OPENAI_ENDPOINT || "" : defaultBaseUrl(provider))
   ).replace(/\/$/, "");
   const forced = ["1", "true", "yes"].includes((env.GEG_DEMO_MODE || "").trim().toLowerCase());
+  const requested = Number(env.LLM_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(requested) && requested >= 1000 ? Math.min(requested, 120_000) : 35_000;
   return {
     provider,
     model,
@@ -63,6 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     azureApiVersion: env.AZURE_OPENAI_API_VERSION || "2024-10-21",
     azureDeployment,
     demoMode: forced || !apiKey,
+    timeoutMs,
   };
 }
 
