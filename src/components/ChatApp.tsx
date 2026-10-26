@@ -3,8 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { RichText } from "@/components/RichText";
+import { consumeChatEvents, type ChatEvent, type SessionSnapshot } from "@/lib/chatEvents";
+import { detectLang } from "@/lib/lang";
 import { copy, type Copy } from "@/lib/uiCopy";
 import type { Comparison, Lang, PublicUnderstanding, ToolTrace, UiMessage } from "@/lib/types";
+
+const CLIENT_TIMEOUT_MS = 120_000;
 
 type Health = {
   demoMode: boolean;
@@ -42,7 +46,10 @@ export function ChatApp() {
   const [draft, setDraft] = useState("");
   const [pendingFiles, setPendingFiles] = useState<{ id: string; name: string }[]>([]);
   const [pendingFolder, setPendingFolder] = useState<string[] | null>(null);
+  const [folderCount, setFolderCount] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [liveTools, setLiveTools] = useState<ToolTrace[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -72,36 +79,49 @@ export function ChatApp() {
         setUnderstanding(session.understanding);
         setConfirmed(Boolean(session.confirmed));
         setComparison(session.comparison);
+        setFolderCount(Number(session.folderCount) || 0);
       }
     }).catch(() => setError("Could not reach the app server."));
   }, []);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, busy, comparison]);
+  }, [messages, busy, comparison, progress, liveTools]);
 
   function applySession(data: {
     messages?: UiMessage[];
     understanding?: PublicUnderstanding | null;
     confirmed?: boolean;
     comparison?: Comparison | null;
+    folderCount?: number;
   }, used: Copy) {
     setMessages([greeting(used), ...(data.messages ?? [])]);
     setUnderstanding(data.understanding ?? null);
     setConfirmed(Boolean(data.confirmed));
     setComparison(data.comparison ?? null);
+    if (typeof data.folderCount === "number") setFolderCount(data.folderCount);
+  }
+
+  function applyContext(event: Extract<ChatEvent, { type: "context" }>) {
+    setUnderstanding(event.understanding);
+    setConfirmed(event.confirmed);
+    setComparison(event.comparison);
+    setFolderCount(event.folderCount);
   }
 
   async function send(input: SendInput) {
     const id = input.session ?? sessionId;
     const bodyText = input.text.trim();
     if (!id || (!bodyText && !input.fileIds?.length && !input.folderNames?.length)) return;
+    const replyLang = detectLang(bodyText, lang);
     setBusy(true);
     setError(null);
+    setLiveTools([]);
+    setProgress(replyLang === "pt" ? "A verificar…" : `${copy[replyLang].typing}…`);
     const optimistic: UiMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      text: bodyText || text.attached,
+      text: bodyText || copy[replyLang].attached,
       attachments: input.fileLabels,
       folderCount: input.folderNames?.length,
     };
@@ -109,10 +129,14 @@ export function ChatApp() {
     setDraft("");
     setPendingFiles([]);
     setPendingFolder(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CLIENT_TIMEOUT_MS);
+    let finished = false;
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           sessionId: id,
           text: bodyText,
@@ -122,14 +146,44 @@ export function ChatApp() {
           lang,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Request failed");
-      applySession(data, copy[lang]);
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error || `Request failed (${response.status})`);
+      }
+      let snapshot: SessionSnapshot | null = null;
+      let streamError = "";
+      await consumeChatEvents(response, (event) => {
+        if (event.type === "progress") setProgress(event.text);
+        if (event.type === "tool") setLiveTools((current) => [...current, event.tool]);
+        if (event.type === "context") applyContext(event);
+        if (event.type === "error") streamError = event.message;
+        if (event.type === "done") snapshot = event.session;
+      });
+      if (!snapshot) throw new Error(streamError || (replyLang === "pt" ? "A resposta não chegou." : "The assistant did not finish."));
+      finished = true;
+      applySession(snapshot, copy[lang]);
+      if (streamError) setError(streamError);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Request failed";
+      const aborted = caught instanceof Error && (caught.name === "AbortError" || caught.name === "TimeoutError");
+      const message = aborted
+        ? replyLang === "pt"
+          ? "A resposta demorou demais e parei à espera do modelo. Se o registo já foi lido, fica no painel de contexto. Tenta outra vez."
+          : "The reply took too long and I stopped waiting for the model. If the register was already read, it stays in the context panel. Try again."
+        : caught instanceof Error
+          ? caught.message
+          : "Request failed";
+      if (!finished) {
+        setMessages((current) => [
+          ...current,
+          { id: crypto.randomUUID(), role: "assistant", text: message },
+        ]);
+      }
       setError(message);
-      throw caught instanceof Error ? caught : new Error(message);
+      if (input.demo) throw caught instanceof Error ? caught : new Error(message);
     } finally {
+      clearTimeout(timer);
+      setProgress(null);
+      setLiveTools([]);
       if (!input.keepBusy) setBusy(false);
     }
   }
@@ -141,9 +195,12 @@ export function ChatApp() {
     setUnderstanding(null);
     setComparison(null);
     setConfirmed(false);
+    setFolderCount(0);
     setPendingFiles([]);
     setPendingFolder(null);
     setError(null);
+    setProgress(null);
+    setLiveTools([]);
     setMessages([greeting(text)]);
     setBusy(true);
     try {
@@ -172,10 +229,13 @@ export function ChatApp() {
     setUnderstanding(null);
     setComparison(null);
     setConfirmed(false);
+    setFolderCount(0);
     setPendingFiles([]);
     setPendingFolder(null);
     setDraft("");
     setError(null);
+    setProgress(null);
+    setLiveTools([]);
     setMessages([greeting(text)]);
   }
 
@@ -221,9 +281,11 @@ export function ChatApp() {
   const registerState = !understanding ? text.waiting : confirmed ? text.confirmed : text.needsConfirm;
   const folderState = pendingFolder
     ? `${pendingFolder.length}`
-    : comparison
-      ? String(comparison.folderFiles)
-      : "—";
+    : folderCount > 0
+      ? String(folderCount)
+      : comparison
+        ? String(comparison.folderFiles)
+        : "—";
 
   return (
     <div className="app">
@@ -282,7 +344,20 @@ export function ChatApp() {
                 ) : null}
               </article>
             ))}
-            {busy ? <p className="typing">{text.typing}…</p> : null}
+            {busy ? (
+              <p className="typing">
+                {progress || `${text.typing}…`}
+                {liveTools.length > 0 ? (
+                  <span className="tools">
+                    {liveTools.map((tool) => (
+                      <span key={`${tool.name}-${tool.summary}`} className={tool.ok ? "tool" : "tool bad"} title={tool.summary}>
+                        {toolLabel(tool)}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
+              </p>
+            ) : null}
             {error ? <p className="error">{error}</p> : null}
           </div>
           <form

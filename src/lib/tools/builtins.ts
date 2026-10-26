@@ -195,7 +195,8 @@ registerTool({
     const result = compareDeliverables(session.register.deliverables, session.folderNames);
     session.comparison = { ...result, confirmed: session.confirmed };
     const summary = `${result.ok} ok · ${result.wrongRevision} wrong rev · ${result.missing} missing · ${result.extra} extra`;
-    const issues = result.rows.filter((row) => row.status !== "ok").slice(0, 20);
+    const issueRows = result.rows.filter((row) => row.status !== "ok");
+    const issues = issueRows.slice(0, 8);
     return {
       ok: true,
       summary,
@@ -208,6 +209,7 @@ registerTool({
         missing: result.missing,
         extra: result.extra,
         issues,
+        issuesOmitted: Math.max(0, issueRows.length - issues.length),
       },
     };
   },

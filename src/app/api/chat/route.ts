@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { runAgent } from "@/lib/agent/loop";
+import type { ChatEvent } from "@/lib/chatEvents";
 import { composeUserContent } from "@/lib/chatTurn";
 import { isLang, json, sessionView } from "@/lib/http";
 import { createProvider } from "@/lib/llm";
@@ -42,31 +43,64 @@ export async function POST(request: Request) {
     files,
     folderCount: session.pendingFolderNames?.length ?? 0,
   });
-  const display =
-    text.trim() ||
-    (session.uiLanguage === "pt" ? "Segue o anexo." : "Attached.");
+  const display = text.trim() || (session.uiLanguage === "pt" ? "Segue o anexo." : "Attached.");
+  const encoder = new TextEncoder();
 
-  try {
-    const provider = createProvider(session, body.demo === true);
-    const result = await runAgent(session, text, composed, provider);
-    session.uiMessages.push({
-      id: randomUUID(),
-      role: "user",
-      text: display,
-      attachments: files.map((file) => file.name),
-      folderCount: folderNames.length || undefined,
-    });
-    session.uiMessages.push({
-      id: randomUUID(),
-      role: "assistant",
-      text: result.text,
-      tools: result.tools,
-      showComparison: result.tools.some((tool) => tool.name === "compare" && tool.ok),
-    });
-    return json(sessionView(session));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "The assistant failed.";
-    console.error("chat failed:", message);
-    return json({ error: message }, 502);
-  }
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: ChatEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      try {
+        const provider = createProvider(session, body.demo === true);
+        const result = await runAgent(session, text, composed, provider, {
+          onProgress: (progress) => send({ type: "progress", text: progress }),
+          onTool: (tool) => send({ type: "tool", tool }),
+          onContext: (snapshot) => send({ type: "context", ...snapshot }),
+        });
+        session.uiMessages.push({
+          id: randomUUID(),
+          role: "user",
+          text: display,
+          attachments: files.map((file) => file.name),
+          folderCount: folderNames.length || undefined,
+        });
+        session.uiMessages.push({
+          id: randomUUID(),
+          role: "assistant",
+          text: result.text,
+          tools: result.tools,
+          showComparison: Boolean(session.comparison) && result.tools.some((tool) => tool.name === "compare" && tool.ok),
+        });
+        send({ type: "done", session: sessionView(session) });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The assistant failed.";
+        console.error("chat failed:", message);
+        send({ type: "error", message });
+        session.uiMessages.push({
+          id: randomUUID(),
+          role: "user",
+          text: display,
+          attachments: files.map((file) => file.name),
+          folderCount: folderNames.length || undefined,
+        });
+        session.uiMessages.push({
+          id: randomUUID(),
+          role: "assistant",
+          text: message,
+        });
+        send({ type: "done", session: sessionView(session) });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
