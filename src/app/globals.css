@@ -80,10 +80,20 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .langs button.on, .tab.on { background: var(--paper-2); color: var(--navy); border-color: var(--paper-2); }
 .composer .langs button.on { color: var(--navy); }
 
+.current-convo {
+  margin: 2px 0 0;
+  color: #d7c3b4;
+  font-size: 13px;
+  max-width: min(280px, 46vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .shell {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
 }
 .thread-wrap {
   min-height: 0;
@@ -189,6 +199,133 @@ th { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: 
 .pager button { color: var(--ink); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
+.convos {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: rgba(251, 247, 241, 0.94);
+}
+.convos-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px 8px;
+}
+.convos-head h2 { margin: 0; }
+.convo-new {
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.convo-hint, .storage-note {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.storage-note { color: var(--bad); }
+.convo-list {
+  overflow: auto;
+  padding: 0 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.convo {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 6px;
+}
+.convo.active { background: white; border-color: var(--line); }
+.convo-select {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 2px 4px;
+}
+.convo-name {
+  display: block;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.convo-meta { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.convo-actions, .convo-rename-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.convo-actions button, .convo-rename button {
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.convo-rename { display: grid; gap: 6px; }
+.convo-rename input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: white;
+}
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(28, 36, 48, 0.46);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.modal-card {
+  width: min(440px, 100%);
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+.modal-card h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+.modal-card p { margin: 0 0 16px; line-height: 1.45; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal button.ghost { color: var(--ink); border-color: var(--line); background: white; }
+button.danger {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: var(--bad);
+  color: white;
+}
+button.danger:hover { background: #7c2222; }
+
+@media (max-width: 1180px) {
+  .shell { grid-template-columns: minmax(0, 1fr) 300px; }
+  .convos { display: none; }
+  .convos.open {
+    display: flex;
+    position: fixed;
+    z-index: 6;
+    top: 76px;
+    left: 12px;
+    width: min(320px, calc(100vw - 24px));
+    max-height: calc(100dvh - 96px);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    background: var(--paper-2);
+  }
+}
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
@@ -201,6 +338,9 @@ th { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: 
     border: 1px solid var(--line);
     box-shadow: var(--shadow);
   }
+}
+@media (min-width: 1181px) {
+  .convos-toggle { display: none; }
 }
 @media (min-width: 981px) {
   .context-toggle { display: none; }
